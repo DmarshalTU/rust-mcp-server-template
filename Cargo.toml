@@ -25,6 +25,10 @@ num_cpus = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 
+# Utilities for async streams
+bytes = "1"
+futures-util = "0.3"
+
 # Logging (optional, can be disabled if not needed)
 # tracing = "0.1"
 # tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

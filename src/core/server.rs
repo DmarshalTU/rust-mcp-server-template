@@ -10,7 +10,14 @@
 use actix_web::{
     web, App, HttpServer, HttpResponse, Result,
     middleware::{Compress, Logger, DefaultHeaders},
+    HttpRequest,
+    http,
 };
+use futures_util::{StreamExt, TryStreamExt};
+use bytes::BytesMut;
+use actix_web::web::Bytes;
+use std::time::Duration;
+use tokio::sync::mpsc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -211,12 +218,151 @@ async fn metrics_handler(
     })))
 }
 
-/// Server-Sent Events endpoint for tools discovery.
+/// MCP over Streamable HTTP endpoint.
 ///
-/// Returns a stream of tool information in SSE format. Clients can subscribe
-/// to this endpoint to receive real-time updates about available tools.
-/// The response includes all registered tools with their names, descriptions,
-/// and input schemas.
+/// This endpoint supports MCP protocol over Streamable HTTP (SSE is deprecated).
+/// For GET requests, it establishes a streaming connection. For POST requests, it handles
+/// MCP JSON-RPC requests and streams responses back.
+///
+/// # Arguments
+/// * `req` - HTTP request (GET for SSE connection, POST for MCP requests)
+/// * `state` - Application state
+/// * `registry` - Tool registry
+/// * `counter` - Request counter
+async fn mcp_sse_handler(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    registry: web::Data<Arc<ToolRegistry>>,
+    counter: web::Data<std::sync::atomic::AtomicU64>,
+    body: web::Payload,
+) -> Result<HttpResponse> {
+    use actix_web::http::header;
+    
+    // Handle GET requests - establish streaming connection for StreamableHttp
+    // Note: SSE is deprecated, but StreamableHttp uses the same endpoint
+    if req.method() == "GET" {
+        // StreamableHttp expects a simple streaming connection
+        // Create a minimal streaming response that keeps connection open
+        let (tx, rx) = mpsc::unbounded_channel::<Bytes>();
+        
+        // Send initial connection acknowledgment
+        let init_message = format!("data: {}\n\n", serde_json::json!({
+            "type": "connection",
+            "status": "connected"
+        }));
+        let _ = tx.send(Bytes::from(init_message));
+        
+        // Send periodic keepalive to prevent connection timeout
+        let keepalive_tx = tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if keepalive_tx.send(Bytes::from(": keepalive\n\n")).is_err() {
+                    break;
+                }
+            }
+        });
+        
+        // Create streaming response
+        let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (Ok::<Bytes, actix_web::Error>(item), rx))
+        });
+        
+        return Ok(HttpResponse::Ok()
+            .content_type("text/event-stream")
+            .insert_header(header::CacheControl(vec![
+                header::CacheDirective::NoCache,
+                header::CacheDirective::NoStore,
+                header::CacheDirective::MustRevalidate,
+            ]))
+            .insert_header(("x-accel-buffering", "no"))
+            .insert_header(("Access-Control-Allow-Origin", "*"))
+            .insert_header(("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE"))
+            .insert_header(("Access-Control-Allow-Headers", "Content-Type"))
+            .insert_header(("Connection", "keep-alive"))
+            .streaming(stream));
+    }
+    
+    // Handle POST requests - process MCP JSON-RPC requests
+    if req.method() == "POST" {
+        // Parse the request body as JSON
+        let mut payload = BytesMut::new();
+        let mut stream = body.into_stream();
+        
+        while let Some(item) = stream.next().await {
+            let chunk = item.map_err(|e| actix_web::error::ErrorBadRequest(e.to_string()))?;
+            payload.extend_from_slice(&chunk);
+        }
+        
+        // Parse JSON-RPC request
+        let mcp_request: MCPRequest = serde_json::from_slice(&payload)
+            .map_err(|e| actix_web::error::ErrorBadRequest(format!("Invalid JSON: {}", e)))?;
+        
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        
+        // Process the MCP request
+        let response = match mcp_request.method.as_str() {
+            "initialize" => handle_initialize(state, mcp_request.id.clone()),
+            "tools/list" => handle_tools_list(registry, mcp_request.id.clone()),
+            "tools/call" => handle_tools_call(registry, mcp_request.id.clone(), mcp_request.params.clone()).await,
+            _ => {
+                MCPResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: mcp_request.id.clone(),
+                    result: None,
+                    error: Some(MCPError {
+                        code: -32601,
+                        message: format!("Method not found: {}", mcp_request.method),
+                        data: None,
+                    }),
+                }
+            }
+        };
+        
+        // Format response as SSE event
+        let response_json = serde_json::to_string(&response)
+            .unwrap_or_else(|_| "{}".to_string());
+        let sse_data = format!("data: {}\n\n", response_json);
+        
+        return Ok(HttpResponse::Ok()
+            .content_type("text/event-stream")
+            .insert_header(header::CacheControl(vec![
+                header::CacheDirective::NoCache,
+                header::CacheDirective::NoStore,
+                header::CacheDirective::MustRevalidate,
+            ]))
+            .insert_header(("x-accel-buffering", "no"))
+            .insert_header(("Access-Control-Allow-Origin", "*"))
+            .body(sse_data));
+    }
+    
+    // Handle DELETE requests - StreamableHttp cleanup
+    if req.method() == "DELETE" {
+        // StreamableHttp sends DELETE to close the connection
+        return Ok(HttpResponse::Ok()
+            .insert_header(("Access-Control-Allow-Origin", "*"))
+            .finish());
+    }
+    
+    // Handle OPTIONS for CORS
+    if req.method() == "OPTIONS" {
+        return Ok(HttpResponse::Ok()
+            .insert_header(("Access-Control-Allow-Origin", "*"))
+            .insert_header(("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE"))
+            .insert_header(("Access-Control-Allow-Headers", "Content-Type"))
+            .finish());
+    }
+    
+    Err(actix_web::error::ErrorMethodNotAllowed("Method not allowed"))
+}
+
+/// Server-Sent Events endpoint for tools discovery (legacy).
+///
+/// Returns a stream of tool information in SSE format. This is kept for backward compatibility.
+/// The main MCP protocol endpoint is now at `/sse` via `mcp_sse_handler`.
 ///
 /// # Arguments
 /// * `registry` - Tool registry containing all registered tools
@@ -297,11 +443,21 @@ fn handle_initialize(state: web::Data<AppState>, id: Option<serde_json::Value>) 
 /// * `registry` - Tool registry containing all registered tools
 /// * `id` - Request ID from the client
 fn handle_tools_list(registry: web::Data<Arc<ToolRegistry>>, id: Option<serde_json::Value>) -> MCPResponse {
+    // Serialize tools with proper MCP protocol field names
+    // inputSchema must be in camelCase per MCP specification
+    let tools_json: Vec<serde_json::Value> = registry.tools.iter()
+        .map(|tool| serde_json::json!({
+            "name": tool.name,
+            "description": tool.description,
+            "inputSchema": tool.input_schema
+        }))
+        .collect();
+    
     MCPResponse {
         jsonrpc: "2.0".to_string(),
         id,
         result: Some(serde_json::json!({
-            "tools": registry.tools
+            "tools": tools_json
         })),
         error: None,
     }
@@ -506,7 +662,15 @@ pub async fn run_server_http(name: String, version: String, host: String, port: 
             // Register route handlers
             .route("/health", web::get().to(health))
             .route("/metrics", web::get().to(metrics_handler))
-            .route("/sse", web::get().to(sse_tools_discovery))
+            // MCP over Streamable HTTP - supports GET (connection), POST (requests), DELETE (cleanup)
+            // Note: SSE is deprecated but this endpoint works for both StreamableHttp and legacy SSE
+            .route("/sse", web::get().to(mcp_sse_handler))
+            .route("/sse", web::post().to(mcp_sse_handler))
+            .route("/sse", web::method(http::Method::OPTIONS).to(mcp_sse_handler))
+            .route("/sse", web::method(http::Method::DELETE).to(mcp_sse_handler))
+            // Legacy tools discovery endpoint
+            .route("/tools/sse", web::get().to(sse_tools_discovery))
+            // Standard MCP JSON-RPC endpoint
             .route("/mcp", web::post().to(mcp_handler_optimized))
             .route("/", web::post().to(mcp_handler_optimized))
             .route("/", web::get().to(health))
