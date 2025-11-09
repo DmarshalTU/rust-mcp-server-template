@@ -1,0 +1,42 @@
+[package]
+name = "mcp-server"
+version = "0.0.1"
+edition = "2024"
+description = "Production-ready Model Context Protocol (MCP) server template built with Rust"
+authors = ["Denis Tu <dmarshaltu@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/dmarshaltu/rust-mcp-server-template"
+
+[dependencies]
+# Web framework - optimized for performance
+# Using latest stable versions for production
+actix-web = { version = "4", default-features = false, features = ["compress-gzip", "compress-brotli"] }
+actix-rt = "2"
+
+# Async runtime - minimal features for size
+# Tokio 1.x is the latest stable async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "io-std", "macros"] }
+
+# CPU detection for optimal worker count
+num_cpus = "1"
+
+# Serialization - optimized
+# Serde 1.0 is the latest stable version
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+
+# Logging (optional, can be disabled if not needed)
+# tracing = "0.1"
+# tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[profile.release]
+# Aggressive optimizations for production
+opt-level = 3
+lto = "thin"           # Link-time optimization
+codegen-units = 1      # Better optimization
+panic = "abort"        # Smaller binary
+strip = true           # Strip symbols
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true           # Keep debug info for profiling

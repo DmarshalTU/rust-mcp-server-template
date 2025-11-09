@@ -1,0 +1,24 @@
+# Rust
+/target
+# Note: Cargo.lock should be committed for applications
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Logs
+*.log

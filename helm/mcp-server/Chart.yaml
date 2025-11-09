@@ -1,0 +1,18 @@
+apiVersion: v2
+name: mcp-server
+description: A Helm chart for Model Context Protocol (MCP) Server
+type: application
+version: 0.0.1
+appVersion: "0.0.1"
+keywords:
+  - mcp
+  - model-context-protocol
+  - rust
+  - actix-web
+maintainers:
+  - name: Denis Tu
+    email: dmarshaltu@gmail.com
+home: https://github.com/dmarshaltu/rust-mcp-server-template
+sources:
+  - https://github.com/dmarshaltu/rust-mcp-server-template
+

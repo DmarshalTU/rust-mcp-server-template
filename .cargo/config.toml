@@ -1,0 +1,11 @@
+# Cargo configuration for optimized builds
+# Note: jobs = 0 means use all cores (default), so we don't need to set it
+
+[target.x86_64-unknown-linux-gnu]
+# For Linux deployments, use native CPU optimizations
+rustflags = ["-C", "target-cpu=native"]
+
+[target.x86_64-apple-darwin]
+# For macOS, use native CPU optimizations
+rustflags = ["-C", "target-cpu=native"]
+

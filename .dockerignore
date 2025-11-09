@@ -1,0 +1,10 @@
+target/
+.git/
+.gitignore
+.idea/
+*.md
+!README.md
+.cargo/
+Cargo.lock
+*.log
+

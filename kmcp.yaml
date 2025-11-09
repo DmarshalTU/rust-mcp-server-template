@@ -1,0 +1,9 @@
+name: mcp-server
+framework: actix-web-rust
+version: 0.1.0
+description: Model Context Protocol server built with Rust
+
+tools:
+  echo:
+    prefix: "Echo: "
+
