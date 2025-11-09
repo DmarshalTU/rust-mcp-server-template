@@ -4,7 +4,7 @@ target/
 .idea/
 *.md
 !README.md
-.cargo/
-Cargo.lock
+# .cargo/ - needed for build, so don't ignore
+# Cargo.lock - needed for reproducible builds
 *.log
 

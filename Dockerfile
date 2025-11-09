@@ -7,7 +7,7 @@
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
-FROM rust:1.75-slim as builder
+FROM rustlang/rust:nightly-slim AS builder
 
 # Install build dependencies required for compiling Rust with SSL support
 RUN apt-get update && apt-get install -y \
@@ -43,7 +43,9 @@ RUN cargo build --release && \
 # Copy actual source code and configuration files
 COPY src/ ./src/
 COPY kmcp.yaml ./
-COPY .cargo/ ./.cargo/
+# Create .cargo directory and copy config if it exists
+RUN mkdir -p .cargo
+COPY .cargo/config.toml ./.cargo/config.toml
 
 # Build the actual application with release optimizations
 # Touch main.rs to ensure it's newer than the dummy file, forcing recompilation

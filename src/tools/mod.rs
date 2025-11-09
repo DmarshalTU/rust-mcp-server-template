@@ -5,5 +5,4 @@
 /// the registry during server initialization.
 
 pub mod echo;
-mod calc;
 
