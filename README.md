@@ -1,5 +1,8 @@
 # Rust MCP Server Template
 
+<img width="1702" height="831" alt="image" src="https://github.com/user-attachments/assets/034efa15-8125-4c9b-a727-90c1fc9f42bb" />
+
+
 A production-ready Model Context Protocol (MCP) server template built with Rust and Actix Web. This template provides a solid foundation for building high-performance MCP servers with support for both STDIO and HTTP transport modes.
 
 ## Table of Contents
